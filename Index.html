@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>忠孝國中｜畢業典禮現場直播</title>
+  <!-- 引入 PeerJS 實現手機與大螢幕低延遲 WebRTC 現場直播 -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    * { box-sizing: border-box; font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background-color: #f6efe2;
+      background-image:
+        linear-gradient(to bottom, rgba(212, 184, 134, 0.18) 1px, transparent 1px),
+        radial-gradient(circle at top center, #fdf8ee 0%, #efe4cf 100%);
+      background-size: 100% 36px, 100% 100%;
+      color: #4a3520;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    /* 大螢幕接收端主視窗 */
+    .live-window {
+      width: min(95vw, 960px);
+      background: #fdf8ee;
+      border: 3px solid #d4b886;
+      border-radius: 18px;
+      box-shadow: 0 20px 55px rgba(74, 53, 32, 0.22);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .live-window.maximized {
+      position: fixed;
+      inset: 12px;
+      width: auto;
+      height: auto;
+      z-index: 1500;
+    }
+
+    .live-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 18px;
+      background: #f7eedc;
+      border-bottom: 1px solid #e6d5b8;
+    }
+    .live-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 19px;
+      font-weight: 800;
+      color: #5c4024;
+    }
+    .live-icon-badge {
+      background: #4a5568;
+      color: #fff;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 19px;
+    }
+    .live-status-pill {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      background: #dc2626;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 4px 12px;
+      border-radius: 999px;
+      animation: pulseLive 1.5s infinite;
+    }
+    @keyframes pulseLive {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .win-controls { display: flex; gap: 6px; }
+    .win-btn {
+      background: transparent;
+      border: none;
+      color: #6b5335;
+      font-size: 18px;
+      font-weight: bold;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .win-btn:hover { background: rgba(0, 0, 0, 0.08); }
+
+    /* 黑色主影像播放舞台 */
+    .video-stage {
+      position: relative;
+      background: #0b0b0b;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      max-height: 62vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .live-window.maximized .video-stage {
+      flex: 1;
+      max-height: none;
+      aspect-ratio: auto;
+    }
+    #host-video, #freeze-canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+      transition: transform 0.25s ease;
+    }
+
+    .stage-placeholder {
+      text-align: center;
+      color: #f3f4f6;
+      padding: 28px;
+    }
+    .stage-placeholder-icon { font-size: 52px; margin-bottom: 12px; opacity: 0.85; }
+    .stage-placeholder h2 {
+      margin: 0 0 10px 0;
+      font-size: clamp(20px, 2.6vw, 28px);
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 1px;
+    }
+    .stage-placeholder p { margin: 0; font-size: clamp(14px, 1.8vw, 17px); color: #d1d5db; }
+
+    /* 淡藍色手機配對 QR Code 與 PIN 資訊列 */
+    .pairing-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      margin: 14px 16px 0 16px;
+      padding: 12px 18px;
+      background: #edf3fc;
+      border: 1px solid #c7d9f7;
+      border-radius: 14px;
+      flex-wrap: wrap;
+    }
+    .pairing-left { display: flex; align-items: center; gap: 16px; }
+    .pairing-qr {
+      width: 76px;
+      height: 76px;
+      background: #fff;
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+      cursor: pointer;
+    }
+    .pin-number-text {
+      font-size: 26px;
+      font-weight: 900;
+      color: #6b4c2a;
+      letter-spacing: 2px;
+      line-height: 1.2;
+    }
+    .pin-sub-status {
+      font-size: 14px;
+      font-weight: 700;
+      color: #7c6244;
+      margin-top: 4px;
+    }
+    .pairing-right { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill-btn {
+      background: #fff;
+      color: #4a3520;
+      border: 1px solid #d1c4ae;
+      padding: 8px 15px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .pill-btn:hover { background: #fef3c7; }
+    .pill-btn.paused { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+
+    /* 底部五顆控制按鈕列 */
+    .bottom-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 16px 16px;
+      flex-wrap: wrap;
+    }
+    .tool-btn {
+      background: #fff;
+      color: #5c4024;
+      border: 1px solid #d6c5a9;
+      padding: 10px 18px;
+      border-radius: 11px;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      transition: 0.15s;
+    }
+    .tool-btn:hover:not(:disabled) { background: #f5ebd6; }
+    .tool-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .tool-btn.brown-solid { background: #5c4328; color: #fff; border-color: #5c4328; }
+    .tool-btn.brown-solid:hover { background: #46321d; }
+    .tool-btn.active-highlight { background: #d97706; color: #fff; border-color: #b45309; }
+
+    /* 放大 QR Code 彈窗 */
+    .zoom-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(45, 32, 18, 0.72);
+      z-index: 2500;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+    .zoom-card {
+      background: #fff;
+      color: #4a3520;
+      border-radius: 26px;
+      padding: 36px 40px;
+      max-width: 820px;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 36px;
+      flex-wrap: wrap;
+      justify-content: center;
+      box-shadow: 0 25px 65px rgba(0, 0, 0, 0.45);
+    }
+    .zoom-card img {
+      width: 300px;
+      height: 300px;
+      border: 2px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 8px;
+    }
+    .zoom-info { flex: 1; min-width: 260px; text-align: left; }
+    .zoom-url-text {
+      font-size: 20px;
+      font-weight: 900;
+      color: #2b1810;
+      word-break: break-all;
+      margin: 6px 0 16px 0;
+      line-height: 1.4;
+    }
+    .zoom-pin-big {
+      font-size: 64px;
+      font-weight: 900;
+      color: #7c5832;
+      letter-spacing: 6px;
+      line-height: 1.05;
+      margin: 6px 0 12px 0;
+    }
+
+    /* 手機端無線攝影機畫面 (?join) */
+    #mobile-sender-view {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #140e0a;
+      color: #fff;
+      z-index: 3000;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+    }
+    .msender-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 12px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(212, 184, 134, 0.35);
+    }
+    .msender-stage {
+      flex: 1;
+      margin: 12px 0;
+      background: #000;
+      border-radius: 18px;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid rgba(212, 184, 134, 0.35);
+    }
+    #msender-video { width: 100%; height: 100%; object-fit: cover; }
+    .msender-join-panel {
+      position: absolute;
+      inset: 0;
+      background: rgba(20, 14, 10, 0.92);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+      text-align: center;
+      gap: 14px;
+    }
+    .msender-pin-input {
+      font-size: 34px;
+      font-weight: 900;
+      letter-spacing: 6px;
+      text-align: center;
+      width: 250px;
+      padding: 12px;
+      border-radius: 14px;
+      border: 2px solid #d4b886;
+      background: #fdf8ee;
+      color: #5c4024;
+    }
+    .msender-bottom { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+
+  <!-- =====================================================================
+       手機端無線直播鏡頭介面 (?join)
+  ===================================================================== -->
+  <div id="mobile-sender-view">
+    <div class="msender-top">
+      <div>
+        <div style="font-weight:900;font-size:17px;color:#fde68a;">🎓 忠孝國中｜畢業典禮無線直播鏡頭</div>
+        <div id="msender-status" style="font-size:13px;color:#d1d5db;">請輸入大螢幕 PIN 碼開始推流</div>
+      </div>
+      <span id="msender-live-badge" style="display:none;background:#dc2626;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:800;">● 直播中</span>
+    </div>
+
+    <div class="msender-stage">
+      <video id="msender-video" autoplay playsinline muted></video>
+      <div class="msender-join-panel" id="msender-join-panel">
+        <div style="font-size:44px;">📱➡️🖥️</div>
+        <div style="font-size:20px;font-weight:800;color:#fde68a;">輸入大螢幕上的 6 位數 PIN 碼</div>
+        <input type="tel" id="msender-pin-input" class="msender-pin-input" maxlength="6" placeholder="000000">
+        <button type="button" class="tool-btn brown-solid" id="btn-msender-start" style="font-size:19px;padding:14px 28px;border-radius:14px;" onclick="startMobileStream()">🚀 開啟鏡頭並開始直播</button>
+      </div>
+    </div>
+
+    <div class="msender-bottom">
+      <button type="button" class="tool-btn" onclick="switchMobileCamera()">🔄 切換前後鏡頭</button>
+      <button type="button" class="tool-btn brown-solid" onclick="stopMobileStream()">⏹ 結束直播</button>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       大螢幕接收端主視窗
+  ===================================================================== -->
+  <div class="live-window" id="live-window">
+    <div class="live-header">
+      <div class="live-title">
+        <span class="live-icon-badge">📷</span>
+        <span>畢業典禮現場直播攝影機</span>
+        <span class="live-status-pill" id="live-status-pill">● LIVE 直播中</span>
+      </div>
+      <div class="win-controls">
+        <button type="button" class="win-btn" title="切換滿版全螢幕" onclick="toggleMaximizeWindow()">⛶</button>
+        <button type="button" class="win-btn" title="重置並關閉所有鏡頭" onclick="resetAllCameras()">✕</button>
+      </div>
+    </div>
+
+    <div class="video-stage">
+      <video id="host-video" autoplay playsinline></video>
+      <canvas id="freeze-canvas"></canvas>
+      <div class="stage-placeholder" id="stage-placeholder">
+        <div class="stage-placeholder-icon">📷</div>
+        <h2>畢業典禮現場直播：舞台頒獎與進場實況</h2>
+        <p>按「開啟」用這台電腦的鏡頭，或按「用手機當鏡頭」掃碼連線</p>
+      </div>
+    </div>
+
+    <!-- 手機掃碼連線與 PIN 碼區塊 -->
+    <div class="pairing-bar" id="pairing-bar" style="display:none;">
+      <div class="pairing-left">
+        <img id="pairing-qr-img" class="pairing-qr" src="" alt="手機掃碼 QR Code" onclick="openZoomModal()" title="點擊放大 QR Code">
+        <div>
+          <div class="pin-number-text" id="pairing-pin-text">PIN ------</div>
+          <div class="pin-sub-status" id="pairing-status-text">等待手機掃碼</div>
+        </div>
+      </div>
+      <div class="pairing-right">
+        <button type="button" class="pill-btn" id="btn-pause-pairing" onclick="togglePausePairing()">⏸ 截止</button>
+        <button type="button" class="pill-btn" onclick="copyJoinLink()">📋 複製連結</button>
+        <button type="button" class="pill-btn" onclick="openZoomModal()">🔍 放大</button>
+      </div>
+    </div>
+
+    <!-- 底部五顆控制按鈕 -->
+    <div class="bottom-toolbar">
+      <button type="button" class="tool-btn brown-solid" id="btn-toggle-local" onclick="toggleLocalCamera()">📷 開啟</button>
+      <button type="button" class="tool-btn brown-solid" id="btn-toggle-mobile" onclick="toggleMobilePairing()">📱 用手機當鏡頭</button>
+      <button type="button" class="tool-btn" id="btn-freeze" onclick="toggleFreeze()" disabled>⏸ 定格</button>
+      <button type="button" class="tool-btn" id="btn-mirror" onclick="toggleMirror()" disabled>↔ 鏡像</button>
+      <button type="button" class="tool-btn" id="btn-rotate" onclick="rotateVideo()" disabled>↻ 旋轉</button>
+    </div>
+  </div>
+
+  <!-- =====================================================================
+       放大 QR Code 與超大 PIN 碼彈窗
+  ===================================================================== -->
+  <div class="zoom-overlay" id="zoom-overlay" onclick="if(event.target===this)closeZoomModal()">
+    <div class="zoom-card">
+      <img id="zoom-qr-img" src="" alt="放大 QR Code">
+      <div class="zoom-info">
+        <div style="font-size:17px;font-weight:700;color:#78350f;">📱 用手機相機掃描 QR Code<br>或開啟這個網址：</div>
+        <div class="zoom-url-text" id="zoom-url-display"></div>
+        <div style="font-size:16px;font-weight:700;color:#78350f;">再輸入 PIN</div>
+        <div class="zoom-pin-big" id="zoom-pin-display">------</div>
+        <div id="zoom-status-display" style="font-size:15px;font-weight:700;color:#92400e;margin-bottom:18px;">等待手機掃碼</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button type="button" class="pill-btn" onclick="copyJoinLink()">📋 複製連結（貼到 LINE 群組）</button>
+          <button type="button" class="tool-btn brown-solid" onclick="closeZoomModal()">關閉（手機仍可加入）</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 自動取得目前 GitHub Pages 網域與路徑
+    const BASE_URL = window.location.origin + window.location.pathname;
+    const URL_PARAMS = new URLSearchParams(window.location.search);
+    const IS_JOIN_MODE = URL_PARAMS.has('join');
+
+    let hostPeer = null;
+    let currentPin = '';
+    let localStream = null;
+    let remoteStream = null;
+    let currentCall = null;
+    let isPairingActive = false;
+    let isPairingPaused = false;
+    let isFrozen = false;
+    let isMirrored = false;
+    let rotationDeg = 0;
+
+    let senderPeer = null;
+    let senderStream = null;
+    let senderFacingMode = 'environment';
+
+    window.addEventListener('DOMContentLoaded', function() {
+      if (IS_JOIN_MODE) {
+        initMobileSenderView();
+      } else {
+        startMobilePairing();
+      }
+    });
+
+    function getJoinUrl(withPin = true) {
+      let url = `${BASE_URL}?join=1`;
+      if (withPin && currentPin) url += `&pin=${currentPin}`;
+      return url;
+    }
+
+    function toggleMaximizeWindow() {
+      const win = document.getElementById('live-window');
+      win.classList.toggle('maximized');
+      if (!document.fullscreenElement && win.classList.contains('maximized')) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    function resetAllCameras() {
+      stopLocalCamera();
+      stopMobilePairing();
+    }
+
+    function applyVideoTransform() {
+      const vid = document.getElementById('host-video');
+      const canvas = document.getElementById('freeze-canvas');
+      const scaleX = isMirrored ? -1 : 1;
+      const scaleFactor = (rotationDeg % 180 !== 0) ? 0.62 : 1;
+      const css = `scaleX(${scaleX}) rotate(${rotationDeg}deg) scale(${scaleFactor})`;
+      vid.style.transform = css;
+      canvas.style.transform = css;
+    }
+
+    function bindStreamToStage(stream) {
+      const vid = document.getElementById('host-video');
+      const placeholder = document.getElementById('stage-placeholder');
+      const pill = document.getElementById('live-status-pill');
+
+      if (stream) {
+        isFrozen = false;
+        document.getElementById('freeze-canvas').style.display = 'none';
+        document.getElementById('btn-freeze').classList.remove('active-highlight');
+        document.getElementById('btn-freeze').textContent = '⏸ 定格';
+
+        vid.srcObject = stream;
+        vid.style.display = 'block';
+        vid.play().catch(() => {});
+        placeholder.style.display = 'none';
+        pill.style.display = 'inline-flex';
+
+        document.getElementById('btn-freeze').disabled = false;
+        document.getElementById('btn-mirror').disabled = false;
+        document.getElementById('btn-rotate').disabled = false;
+      } else {
+        vid.srcObject = null;
+        vid.style.display = 'none';
+        document.getElementById('freeze-canvas').style.display = 'none';
+        placeholder.style.display = 'block';
+        pill.style.display = 'none';
+
+        document.getElementById('btn-freeze').disabled = true;
+        document.getElementById('btn-mirror').disabled = true;
+        document.getElementById('btn-rotate').disabled = true;
+      }
+    }
+
+    // 1. 本機電腦鏡頭開關
+    async function toggleLocalCamera() {
+      if (localStream) {
+        stopLocalCamera();
+        if (remoteStream) bindStreamToStage(remoteStream);
+        return;
+      }
+      const btn = document.getElementById('btn-toggle-local');
+      btn.textContent = '⏳ 啟動相機中...';
+
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        bindStreamToStage(localStream);
+        btn.textContent = '⏹ 關閉本機鏡頭';
+        btn.classList.add('active-highlight');
+      } catch (err) {
+        btn.textContent = '📷 開啟';
+        alert('無法開啟這台電腦的攝影機（' + err.message + '），請確認瀏覽器已允許相機權限或改用手機連線。');
+      }
+    }
+
+    function stopLocalCamera() {
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+        localStream = null;
+      }
+      const btn = document.getElementById('btn-toggle-local');
+      btn.textContent = '📷 開啟';
+      btn.classList.remove('active-highlight');
+      if (!remoteStream) bindStreamToStage(null);
+    }
+
+    // 2. 手機無線鏡頭配對開關
+    function toggleMobilePairing() {
+      if (isPairingActive) {
+        stopMobilePairing();
+      } else {
+        startMobilePairing();
+      }
+    }
+
+    function startMobilePairing() {
+      if (typeof Peer === 'undefined') {
+        document.getElementById('pairing-bar').style.display = 'flex';
+        document.getElementById('pairing-status-text').textContent = '⏳ 正在載入連線元件...';
+        setTimeout(startMobilePairing, 500);
+        return;
+      }
+      isPairingActive = true;
+      isPairingPaused = false;
+      currentPin = String(Math.floor(100000 + Math.random() * 900000));
+      const peerId = `chjh-grad-live-${currentPin}`;
+
+      document.getElementById('pairing-bar').style.display = 'flex';
+      document.getElementById('btn-toggle-mobile').textContent = '📱 關閉手機連線';
+      document.getElementById('pairing-pin-text').textContent = `PIN ${currentPin}`;
+      document.getElementById('pairing-status-text').textContent = '建立直播頻道中...';
+
+      const joinUrlWithPin = getJoinUrl(true);
+      const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=6&data=${encodeURIComponent(joinUrlWithPin)}`;
+      document.getElementById('pairing-qr-img').src = qrApiUrl;
+      document.getElementById('zoom-qr-img').src = qrApiUrl;
+      document.getElementById('zoom-url-display').textContent = getJoinUrl(false).replace(/^https?:\/\//, '');
+      document.getElementById('zoom-pin-display').textContent = currentPin;
+
+      if (hostPeer) hostPeer.destroy();
+      hostPeer = new Peer(peerId, { debug: 1 });
+
+      hostPeer.on('open', () => {
+        document.getElementById('pairing-status-text').textContent = '等待手機掃碼';
+        document.getElementById('zoom-status-display').textContent = '等待手機掃碼';
+      });
+
+      hostPeer.on('call', call => {
+        if (isPairingPaused) {
+          call.close();
+          return;
+        }
+        call.answer();
+        if (currentCall && currentCall !== call) currentCall.close();
+        currentCall = call;
+
+        call.on('stream', stream => {
+          remoteStream = stream;
+          bindStreamToStage(stream);
+          document.getElementById('pairing-status-text').textContent = '✅ 手機鏡頭已連線直播中！';
+          document.getElementById('zoom-status-display').textContent = '✅ 手機已成功連線！';
+          closeZoomModal();
+        });
+
+        call.on('close', () => {
+          remoteStream = null;
+          document.getElementById('pairing-status-text').textContent = '手機已離線，等待重新連線...';
+          if (localStream) bindStreamToStage(localStream);
+          else bindStreamToStage(null);
+        });
+      });
+
+      hostPeer.on('error', err => {
+        document.getElementById('pairing-status-text').textContent = '連線異常：' + err.type;
+      });
+    }
+
+    function stopMobilePairing() {
+      isPairingActive = false;
+      if (currentCall) { currentCall.close(); currentCall = null; }
+      if (hostPeer) { hostPeer.destroy(); hostPeer = null; }
+      remoteStream = null;
+      document.getElementById('pairing-bar').style.display = 'none';
+      document.getElementById('btn-toggle-mobile').textContent = '📱 用手機當鏡頭';
+      if (localStream) bindStreamToStage(localStream);
+      else bindStreamToStage(null);
+    }
+
+    function togglePausePairing() {
+      isPairingPaused = !isPairingPaused;
+      const btn = document.getElementById('btn-pause-pairing');
+      btn.textContent = isPairingPaused ? '▶ 恢復' : '⏸ 截止';
+      btn.classList.toggle('paused', isPairingPaused);
+      document.getElementById('pairing-status-text').textContent = isPairingPaused
+        ? '⛔ 已截止手機加入'
+        : '等待手機掃碼';
+    }
+
+    function copyJoinLink() {
+      const url = getJoinUrl(true);
+      navigator.clipboard.writeText(url).then(() => {
+        alert(`已複製手機直播連結（自動帶入 PIN ${currentPin}）！\n可直接貼到 LINE 群組讓攝影師點擊開啟。`);
+      });
+    }
+
+    function openZoomModal() { document.getElementById('zoom-overlay').style.display = 'flex'; }
+    function closeZoomModal() { document.getElementById('zoom-overlay').style.display = 'none'; }
+
+    // 3. 定格、鏡像、旋轉
+    function toggleFreeze() {
+      const vid = document.getElementById('host-video');
+      const canvas = document.getElementById('freeze-canvas');
+      const btn = document.getElementById('btn-freeze');
+
+      if (!isFrozen) {
+        if (!vid.videoWidth) return;
+        canvas.width = vid.videoWidth;
+        canvas.height = vid.videoHeight;
+        canvas.getContext('2d').drawImage(vid, 0, 0, canvas.width, canvas.height);
+        vid.style.display = 'none';
+        canvas.style.display = 'block';
+        isFrozen = true;
+        btn.classList.add('active-highlight');
+        btn.textContent = '▶ 解除定格';
+      } else {
+        canvas.style.display = 'none';
+        vid.style.display = 'block';
+        isFrozen = false;
+        btn.classList.remove('active-highlight');
+        btn.textContent = '⏸ 定格';
+      }
+    }
+
+    function toggleMirror() {
+      isMirrored = !isMirrored;
+      document.getElementById('btn-mirror').classList.toggle('active-highlight', isMirrored);
+      applyVideoTransform();
+    }
+
+    function rotateVideo() {
+      rotationDeg = (rotationDeg + 90) % 360;
+      applyVideoTransform();
+    }
+
+    // =====================================================================
+    //  手機推流端邏輯 (?join)
+    // =====================================================================
+    function initMobileSenderView() {
+      document.getElementById('live-window').style.display = 'none';
+      document.getElementById('mobile-sender-view').style.display = 'flex';
+
+      const urlPin = (URL_PARAMS.get('pin') || '').trim();
+      if (urlPin) {
+        document.getElementById('msender-pin-input').value = urlPin;
+        document.getElementById('msender-status').textContent = `已自動帶入 PIN ${urlPin}，點擊下方按鈕立即開播`;
+      }
+    }
+
+    async function startMobileStream() {
+      const pin = (document.getElementById('msender-pin-input').value || '').trim();
+      if (!/^\d{6}$/.test(pin)) {
+        alert('請輸入大螢幕上的 6 位數字 PIN 碼！');
+        return;
+      }
+
+      const btn = document.getElementById('btn-msender-start');
+      btn.disabled = true;
+      btn.textContent = '開啟相機中...';
+
+      try {
+        if (senderStream) senderStream.getTracks().forEach(t => t.stop());
+        senderStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: senderFacingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+        document.getElementById('msender-video').srcObject = senderStream;
+        document.getElementById('msender-join-panel').style.display = 'none';
+        document.getElementById('msender-status').textContent = `正在連線大螢幕 (PIN ${pin})...`;
+
+        if (senderPeer) senderPeer.destroy();
+        senderPeer = new Peer({ debug: 1 });
+
+        senderPeer.on('open', () => {
+          const call = senderPeer.call(`chjh-grad-live-${pin}`, senderStream);
+          document.getElementById('msender-status').textContent = `✅ 已連線大螢幕 (PIN ${pin})，即時直播中！`;
+          document.getElementById('msender-live-badge').style.display = 'inline-block';
+          btn.disabled = false;
+          btn.textContent = '🚀 開啟鏡頭並開始直播';
+
+          call.on('close', () => {
+            document.getElementById('msender-status').textContent = '大螢幕已停止接收';
+            document.getElementById('msender-live-badge').style.display = 'none';
+          });
+        });
+
+        senderPeer.on('error', err => {
+          alert('連線失敗（請確認大螢幕 PIN 碼是否正確且未按截止）：' + err.type);
+          document.getElementById('msender-join-panel').style.display = 'flex';
+          btn.disabled = false;
+          btn.textContent = '🚀 開啟鏡頭並開始直播';
+        });
+      } catch (err) {
+        alert('無法開啟手機鏡頭，請允許瀏覽器相機權限：' + err.message);
+        btn.disabled = false;
+        btn.textContent = '🚀 開啟鏡頭並開始直播';
+      }
+    }
+
+    async function switchMobileCamera() {
+      senderFacingMode = (senderFacingMode === 'environment') ? 'user' : 'environment';
+      if (senderStream) await startMobileStream();
+    }
+
+    function stopMobileStream() {
+      if (senderStream) { senderStream.getTracks().forEach(t => t.stop()); senderStream = null; }
+      if (senderPeer) { senderPeer.destroy(); senderPeer = null; }
+      document.getElementById('msender-video').srcObject = null;
+      document.getElementById('msender-live-badge').style.display = 'none';
+      document.getElementById('msender-join-panel').style.display = 'flex';
+      document.getElementById('msender-status').textContent = '已結束直播';
+    }
+  </script>
+</body>
+</html>
